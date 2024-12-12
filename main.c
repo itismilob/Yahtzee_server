@@ -1,12 +1,32 @@
-#include "common.h"
-#include "data_struct.h"
-
 #define SERVERPORT 8000
 #define BUFSIZE 512
+#define MAX_USER 2
+#define MAX_ROUND 2
+
+
+#include "common.h"
+// result buffer
+char buffer[BUFSIZE + 1];
+// 접속 정보 출력
+char addr[INET_ADDRSTRLEN];
+int result;
+int turn;
+
+#include "data_struct.h"
+
+Users users[MAX_USER];
+DiceData diceData;
+ScoreData scoreData;
+Scoreboard scoreboard;
+
+#include "data_connection.h"
+#include "game.h"
+
+
+
 
 int main() {
-	int result;
-
+	int i, j;
 	// 윈속 초기화
 	WSADATA wsadata;
 	if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0) return 1;
@@ -31,111 +51,138 @@ int main() {
 	if (result == SOCKET_ERROR) err_quit("listen");
 	printf("\n 서버 오픈");
 
-
-
 	// accept
 	// 클라이언트 1, 2 구조체 생성
-	SOCKET client1, client2;
-	struct sockaddr_in client1addr, client2addr;
-	int addrlen1 = sizeof(client1addr);
-	int addrlen2 = sizeof(client2addr);
-
-	// result buffer
-	char buffer[BUFSIZE + 1];
-	// 접속 정보 출력
-	char addr[INET_ADDRSTRLEN];
-
-
-	// 유저1, 2 접속 #1-2
-	client1 = accept(serversock, (struct sockaddr*)&client1addr, &addrlen1);
-	if (client1 == INVALID_SOCKET) {
-		err_quit("accept");
-	}
-	inet_ntop(AF_INET, &client1addr.sin_addr, addr, sizeof(addr));
-	printf("\n[SERVER] client1 : IP : %s, PORT : %d\n", addr, ntohs(client1addr.sin_port));
-
-	client2 = accept(serversock, (struct sockaddr*)&client2addr, &addrlen2);
-	if (client2 == INVALID_SOCKET) {
-		err_quit("accept");
-	}
-	inet_ntop(AF_INET, &client2addr.sin_addr, addr, sizeof(addr));
-	printf("\n[SERVER] client2 : IP : %s, PORT : %d\n", addr, ntohs(client2addr.sin_port));
-
-	printf("모든 유저 접속 완료\n");
-
-	// 변수 초기화 #1-3
-	UserNumber user1 = 1;
-	UserNumber user2 = 2;
-	int i;
-
-	DiceData diceData;
-	for (i = 0;i < 5;i++) {
-		diceData.diceList[i] = NULL;
-	}
-	diceData.isStop = FALSE;
-
-	ScoreData scoreData;
-	scoreData.combination = NULL;
-	scoreData.score = 0;
-
-	Scoreboard scoreboard;
-	scoreboard.turn = 1;
-	for(i=0;i<SCORE_LEN;i++){
-		scoreboard.user1[i] = 0;
-		scoreboard.user2[i] = 0;
+	for (i = 0;i < MAX_USER;i++) {
+		users[i].usernumber = i;
+		users[i].useraddrlen = sizeof(users[i].useraddr);
+		users[i].usersock = INVALID_SOCKET;
 	}
 
-	// 유저 번호 알려주기 #1-4 send UserNumber
-	send(client1, (char*)&user1, BUFSIZE, 0);
-	send(client2, (char*)&user2, BUFSIZE, 0);
-
-	// 게임 시작 #1-5 send Scoreboard
-	send(client1, (char*)&scoreboard, BUFSIZE, 0);
-	send(client2, (char*)&scoreboard, BUFSIZE, 0);
-
-	// #2
+	// server loop
 	while (1) {
-		// 유저로부터 주사위 전송받음 #2-1 recv DiceData
-
-		// 다른 유저에게 주사위 결과 전송함 #2-2 send DiceData
-
-		// 유저가 조합을 선택해서 전송받음 #2-3 recv ScoreData
-
-		// 점수 결과를 유저 모두에게 전송 #2-3-* send Scoreboard
-
-		// 턴 변경
-		scoreboard.turn = scoreboard.turn == 1 ? 2 : 1;
-
-
-
-
-
-		// 유저의 입력 받기
-		/*memset(buffer, 0, sizeof(buffer));
-		if (scoreboard.turn == 1) {
-			result = recv(client1, buffer, BUFSIZE, 0);
+		// 유저 접속 #1-2
+		for (i = 0;i < MAX_USER;i++) {
+			users[i].usersock = accept(serversock, (struct sockaddr*)&users[i].useraddr, &users[i].useraddrlen);
+			if (users[i].usersock == INVALID_SOCKET) {
+				err_quit("accept");
+			}
+			inet_ntop(AF_INET, &users[i].useraddr.sin_addr, addr, sizeof(addr));
+			printf("\n[SERVER] client1 : IP : %s, PORT : %d\n", addr, ntohs(users[i].useraddr.sin_port));
 		}
-		else {
-			result = recv(client2, buffer, BUFSIZE, 0);
+
+		printf("모든 유저 접속 완료\n");
+
+		// 변수 초기화 #1-3
+		turn = 0;
+
+		for (i = 0;i < 5;i++) {
+			diceData.diceList[i] = 0;
 		}
-		if (result == SOCKET_ERROR) {
-			err_quit("recv 실패");
+		diceData.isStop = FALSE;
+
+		scoreData.combination = 0;
+		scoreData.score = 0;
+
+		scoreboard.turn = 0;
+		for (i = 0;i < MAX_USER;i++) {
+			for (j = 0;j < SCORE_LEN;j++) {
+				scoreboard.userScore[i][j] = -1;
+			}
 		}
-		buffer[result] = '\0';
-		printf("[유저%d 입력] %s\n", scoreboard.turn, buffer);*/
+
+		// 유저 번호 알려주기 #1-4 send UserNumber
+		for (i = 0;i < MAX_USER;i++) {
+			int net = htonl(users[i].usernumber);
+			send(users[i].usersock, (char*)&net, sizeof(net), 0);
+		}
+
+		// 게임 시작 #1-5 send Scoreboard
+		for (i = 0;i < MAX_USER;i++) {
+			sendScoreboard(users[i].usersock);
+		}
 
 
+		// #2
+		int round = 0;
+		int nextTurn;
+		while (round < MAX_ROUND) {
 
-		// 입력 결과 알려주기
-		/*send(client1, (char*)&turn, BUFSIZE, 0);
-		send(client2, (char*)&turn, BUFSIZE, 0);*/
+			do {
+				// 유저로부터 주사위 전송받음 #2-1 recv DiceData
+				recvDiceData(users[turn].usersock);
+				printf("[유저 %d] diceData [ ", turn+1);
+				for (i = 0;i < 5;i++) {
+					printf("%d ", diceData.diceList[i]);
+				}
+				printf("] %d\n", diceData.isStop);
+
+				nextTurn = turn + 1;
+				if (nextTurn >= MAX_USER) nextTurn = 0;
+				// 다른 유저에게 주사위 결과 전송함 #2-2 send DiceData
+				sendDiceData(users[nextTurn].usersock);
+			} while (!diceData.isStop);
+
+			// 유저가 조합을 선택해서 전송받음 #2-3 recv ScoreData
+			recvScoreData(users[turn].usersock);
+			printf("[유저 %d] scoreData %d - %d\n", turn + 1, scoreData.combination+1, scoreData.score);
+
+			nextTurn = turn + 1;
+			if (nextTurn >= MAX_USER) nextTurn = 0;
+			sendScoreData(users[nextTurn].usersock);
+
+			// 점수 입력
+			scoreboard.userScore[turn][scoreData.combination] = scoreData.score;
+
+			int bonus = 0;
+			for (i = 0; i < 6; i++) {
+				bonus += scoreboard.userScore[turn][i];
+			}
+			if (bonus >= 63) {
+				scoreboard.userScore[turn][13] = 35;
+			}
+
+			int total = 0;
+			for (i = 0; i < 15; i++) {
+				if (scoreboard.userScore[turn][i] != -1) {
+					total += scoreboard.userScore[turn][i];
+				}
+			}
+
+			if (total <= 0) total = -1;
+
+			scoreboard.userScore[turn][15] = total;
+
+
+			// 턴 변경
+			turn += 1;
+			if (turn >= MAX_USER) turn = 0;
+
+			printf("턴 변경 %d -> %d\n\n", scoreboard.turn, turn);
+			scoreboard.turn = turn;
+
+			// 점수 결과를 유저 모두에게 전송 #2-3-* send Scoreboard
+			for (i = 0;i < MAX_USER;i++) {
+				sendScoreboard(users[i].usersock);
+			}
+
+			if (turn == 0) round++;
+
+		} 
+		// 게임 종료됨
+		printf("게임이 종료되었습니다.\n");
+		for (i = 0;i < MAX_USER;i++) {
+			sendScoreboard(users[i].usersock);
+		}
+
+		// 소켓 종료
+		for (i = 0;i < MAX_USER;i++) {
+			closesocket(users[i].usersock);
+		}
 	}
+	// server loop
 
 
-
-	// 소켓 종료
-	closesocket(client1);
-	closesocket(client2);
 	closesocket(serversock);
 
 	// 윈속 종료
