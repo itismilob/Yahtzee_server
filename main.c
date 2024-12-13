@@ -1,6 +1,10 @@
 #define SERVERPORT 8000
 #define BUFSIZE 512
+
+// 최대 유저 접속 수 2~
 #define MAX_USER 2
+
+// 최대 라운드 13
 #define MAX_ROUND 2
 
 
@@ -51,18 +55,16 @@ int main() {
 	if (result == SOCKET_ERROR) err_quit("listen");
 	printf("\n 서버 오픈");
 
-	// accept
-	// 클라이언트 1, 2 구조체 생성
-	for (i = 0;i < MAX_USER;i++) {
-		users[i].usernumber = i;
-		users[i].useraddrlen = sizeof(users[i].useraddr);
-		users[i].usersock = INVALID_SOCKET;
-	}
 
 	// server loop
 	while (1) {
+		// accept
+		// 클라이언트 1, 2 구조체 생성
 		// 유저 접속 #1-2
 		for (i = 0;i < MAX_USER;i++) {
+			users[i].usernumber = i;
+			users[i].useraddrlen = sizeof(users[i].useraddr);
+			users[i].usersock = INVALID_SOCKET;
 			users[i].usersock = accept(serversock, (struct sockaddr*)&users[i].useraddr, &users[i].useraddrlen);
 			if (users[i].usersock == INVALID_SOCKET) {
 				err_quit("accept");
@@ -105,7 +107,6 @@ int main() {
 
 		// #2
 		int round = 0;
-		int nextTurn;
 		while (round < MAX_ROUND) {
 
 			do {
@@ -117,19 +118,23 @@ int main() {
 				}
 				printf("] %d\n", diceData.isStop);
 
-				nextTurn = turn + 1;
-				if (nextTurn >= MAX_USER) nextTurn = 0;
-				// 다른 유저에게 주사위 결과 전송함 #2-2 send DiceData
-				sendDiceData(users[nextTurn].usersock);
+				for (i = 0; i < MAX_USER; i++) {
+					if (i != turn) {
+						// 다른 유저에게 주사위 결과 전송함 #2-2 send DiceData
+						sendDiceData(users[i].usersock);
+					}
+				}
 			} while (!diceData.isStop);
 
 			// 유저가 조합을 선택해서 전송받음 #2-3 recv ScoreData
 			recvScoreData(users[turn].usersock);
 			printf("[유저 %d] scoreData %d - %d\n", turn + 1, scoreData.combination+1, scoreData.score);
 
-			nextTurn = turn + 1;
-			if (nextTurn >= MAX_USER) nextTurn = 0;
-			sendScoreData(users[nextTurn].usersock);
+			for (i = 0; i < MAX_USER; i++) {
+				if (i != turn) {
+					sendScoreData(users[i].usersock);
+				}
+			}
 
 			// 점수 입력
 			scoreboard.userScore[turn][scoreData.combination] = scoreData.score;
